@@ -17,7 +17,6 @@ Bash-based automatic updater for Plex Media Server, designed to run from cron on
 ## Key Files
 
 - `plex-update.sh` — the updater script (entry point)
-- `api.json` — sample API response for development/testing
 
 ## Development Notes
 
