@@ -2,6 +2,7 @@
 set -euo pipefail
 
 API_URL="https://plex.tv/api/downloads/5.json?channel=plexpass"
+DIRECT_URL="https://plex.tv/downloads/latest/5?channel=8&build=linux-x86_64&distro=redhat&X-Plex-Token=xxxxxxxxxxxxxxxxxxxx"
 TMP_DIR="/tmp"
 PLEX_PACKAGE="plexmediaserver"
 DRY_RUN=false
@@ -61,6 +62,19 @@ parse_latest_jq() {
     checksum=$(echo "$release" | jq -r '.checksum')
 
     printf '%s\n%s\n%s\n' "$version" "$url" "$checksum"
+}
+
+# Follow the redirect of the direct download endpoint and extract version + URL
+# from the resolved filename (e.g. plexmediaserver-1.43.0.10492-abc.x86_64.rpm).
+# Prints "<version>\n<url>" on success, outputs nothing on failure.
+fetch_direct() {
+    local final_url
+    final_url=$(curl -fsL --write-out '%{url_effective}' -o /dev/null "$DIRECT_URL" 2>/dev/null) || return 1
+
+    local version
+    version=$(basename "$final_url" | sed -n 's/plexmediaserver-\(.*\)\.x86_64\.rpm/\1/p')
+
+    [[ -n "$version" ]] && printf '%s\n%s\n' "$version" "$final_url"
 }
 
 # Compare two version strings like 1.43.0.10492-121068a07.
@@ -136,6 +150,24 @@ main() {
         log "ERROR: Failed to parse API response."
         exit 1
     fi
+    log "API version: $latest_version"
+
+    log "Checking direct download endpoint for newer build..."
+    local direct_parsed direct_version direct_url
+    direct_parsed=$(fetch_direct) || true
+    if [[ -n "$direct_parsed" ]]; then
+        direct_version=$(echo "$direct_parsed" | sed -n '1p')
+        direct_url=$(echo "$direct_parsed" | sed -n '2p')
+        log "Direct endpoint version: $direct_version"
+        if version_newer "$direct_version" "$latest_version"; then
+            log "Direct endpoint has a newer build; using it (no checksum available)."
+            latest_version="$direct_version"
+            download_url="$direct_url"
+            checksum=""
+        fi
+    else
+        log "Direct endpoint check failed or returned no version; falling back to API."
+    fi
     log "Latest version: $latest_version"
 
     if ! version_newer "$latest_version" "$installed_version"; then
@@ -154,13 +186,17 @@ main() {
     log "Downloading $download_url ..."
     curl -fL -o "$rpm_file" "$download_url"
 
-    log "Verifying checksum..."
-    if ! verify_checksum "$rpm_file" "$checksum"; then
-        log "ERROR: Checksum mismatch. Removing downloaded file."
-        rm -f "$rpm_file"
-        exit 1
+    if [[ -n "$checksum" ]]; then
+        log "Verifying checksum..."
+        if ! verify_checksum "$rpm_file" "$checksum"; then
+            log "ERROR: Checksum mismatch. Removing downloaded file."
+            rm -f "$rpm_file"
+            exit 1
+        fi
+        log "Checksum OK."
+    else
+        log "No checksum available for this build; skipping verification."
     fi
-    log "Checksum OK."
 
     log "Installing ${rpm_file}..."
     rpm -Uvh --nosignature "$rpm_file"
