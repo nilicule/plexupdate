@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+TOKEN_FILE="$SCRIPT_DIR/.plex-token"
+
 API_URL="https://plex.tv/api/downloads/5.json?channel=plexpass"
 DIRECT_URL="https://plex.tv/downloads/latest/5?channel=8&build=linux-x86_64&distro=redhat&X-Plex-Token=xxxxxxxxxxxxxxxxxxxx"
 TMP_DIR="/tmp"
 PLEX_PACKAGE="plexmediaserver"
 DRY_RUN=false
+PLEX_TOKEN=""
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -112,13 +116,49 @@ verify_checksum() {
     [[ "$actual" == "$expected" ]]
 }
 
+load_token() {
+    if [[ -f "$TOKEN_FILE" ]]; then
+        local raw
+        raw=$(cat "$TOKEN_FILE")
+        PLEX_TOKEN=$(echo "$raw" | tr -d '[:space:]')
+    fi
+}
+
+set_token() {
+    local token
+    token=$(echo "$1" | tr -d '[:space:]')
+    if [[ -z "$token" ]]; then
+        log "ERROR: --set-token requires a non-empty token value."
+        exit 1
+    fi
+    printf '%s' "$token" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+    log "Token saved to $TOKEN_FILE"
+    exit 0
+}
+
 main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --set-token)
+                if [[ $# -lt 2 ]]; then
+                    log "ERROR: --set-token requires a non-empty token value."
+                    exit 1
+                fi
+                set_token "$2"
+                shift
+                ;;
             --dry-run) DRY_RUN=true; shift ;;
             *) log "Unknown option: $1"; exit 1 ;;
         esac
+        shift
     done
+
+    load_token
+    if [[ -n "$PLEX_TOKEN" ]]; then
+        API_URL="${API_URL}&X-Plex-Token=${PLEX_TOKEN}"
+        DIRECT_URL="${DIRECT_URL/xxxxxxxxxxxxxxxxxxxx/$PLEX_TOKEN}"
+    fi
 
     log "Checking installed Plex version..."
     local installed_version
@@ -152,21 +192,25 @@ main() {
     fi
     log "API version: $latest_version"
 
-    log "Checking direct download endpoint for newer build..."
-    local direct_parsed direct_version direct_url
-    direct_parsed=$(fetch_direct) || true
-    if [[ -n "$direct_parsed" ]]; then
-        direct_version=$(echo "$direct_parsed" | sed -n '1p')
-        direct_url=$(echo "$direct_parsed" | sed -n '2p')
-        log "Direct endpoint version: $direct_version"
-        if version_newer "$direct_version" "$latest_version"; then
-            log "Direct endpoint has a newer build; using it (no checksum available)."
-            latest_version="$direct_version"
-            download_url="$direct_url"
-            checksum=""
-        fi
+    if [[ -z "$PLEX_TOKEN" ]]; then
+        log "No Plex token found; skipping direct download check."
     else
-        log "Direct endpoint check failed or returned no version; falling back to API."
+        log "Checking direct download endpoint for newer build..."
+        local direct_parsed direct_version direct_url
+        direct_parsed=$(fetch_direct) || true
+        if [[ -n "$direct_parsed" ]]; then
+            direct_version=$(echo "$direct_parsed" | sed -n '1p')
+            direct_url=$(echo "$direct_parsed" | sed -n '2p')
+            log "Direct endpoint version: $direct_version"
+            if version_newer "$direct_version" "$latest_version"; then
+                log "Direct endpoint has a newer build; using it (no checksum available)."
+                latest_version="$direct_version"
+                download_url="$direct_url"
+                checksum=""
+            fi
+        else
+            log "Direct endpoint check failed or returned no version; falling back to API."
+        fi
     fi
     log "Latest version: $latest_version"
 
