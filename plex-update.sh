@@ -207,12 +207,12 @@ main() {
                 latest_version="$direct_version"
                 download_url="$direct_url"
                 checksum=""
+                log "Latest version: $latest_version"
             fi
         else
             log "Direct endpoint check failed or returned no version; falling back to API."
         fi
     fi
-    log "Latest version: $latest_version"
 
     if ! version_newer "$latest_version" "$installed_version"; then
         log "Already up to date."
