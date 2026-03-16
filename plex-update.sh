@@ -9,6 +9,7 @@ DIRECT_URL="https://plex.tv/downloads/latest/5?channel=8&build=linux-x86_64&dist
 TMP_DIR="/tmp"
 PLEX_PACKAGE="plexmediaserver"
 DRY_RUN=false
+NON_ROOT=false
 PLEX_TOKEN=""
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -154,6 +155,11 @@ main() {
         shift
     done
 
+    if [[ $EUID -ne 0 ]]; then
+        NON_ROOT=true
+        log "Not running as root; will show what would happen without making changes."
+    fi
+
     load_token
     if [[ -n "$PLEX_TOKEN" ]]; then
         API_URL="${API_URL}&X-Plex-Token=${PLEX_TOKEN}"
@@ -219,9 +225,12 @@ main() {
         exit 0
     fi
 
-    if $DRY_RUN; then
+    if $DRY_RUN || $NON_ROOT; then
         log "[DRY-RUN] Would download: $download_url"
         log "[DRY-RUN] Would install: ${PLEX_PACKAGE}-${latest_version}.x86_64.rpm"
+        if $NON_ROOT && ! $DRY_RUN; then
+            log "Not running as root; no changes were made. Re-run as root to apply the update."
+        fi
         exit 0
     fi
 
