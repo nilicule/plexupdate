@@ -234,6 +234,8 @@ main() {
                 set_token "$2"
                 ;;
             --dry-run) DRY_RUN=true ;;
+            -i|--install) INSTALL_MODE=true ;;
+            -h|--help) usage; exit 0 ;;
             --platform)
                 if [[ $# -lt 2 ]]; then
                     log "ERROR: --platform requires a value (linux or macos)."
