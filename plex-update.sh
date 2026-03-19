@@ -157,7 +157,6 @@ main() {
 
     if [[ $EUID -ne 0 ]]; then
         NON_ROOT=true
-        log "Not running as root; will show what would happen without making changes."
     fi
 
     load_token
