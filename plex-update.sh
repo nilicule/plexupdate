@@ -290,13 +290,16 @@ main() {
 
     log "Fetching latest release info from Plex API..."
     local api_json
-    api_json=$(fetch_api)
+    if ! api_json=$(fetch_api); then
+        log "ERROR: Failed to fetch API response. Check network connectivity and your Plex token."
+        exit 1
+    fi
 
     local parsed
     if command -v jq &>/dev/null; then
-        parsed=$(parse_latest_jq "$api_json")
+        parsed=$(parse_latest_jq "$api_json") || true
     else
-        parsed=$(parse_latest "$api_json")
+        parsed=$(parse_latest "$api_json") || true
     fi
 
     local latest_version download_url checksum
