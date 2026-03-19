@@ -203,8 +203,14 @@ install_package() {
         cp -R "$tmp_unzip/Plex Media Server.app" "$PLEX_APP_PATH"
         rm -rf "$tmp_unzip"
 
-        log "Starting Plex Media Server..."
-        launchctl load "$LAUNCHD_PLIST"
+        if [[ -f "$LAUNCHD_PLIST" ]]; then
+            log "Starting Plex Media Server..."
+            launchctl load "$LAUNCHD_PLIST"
+        elif [[ "$INSTALL_MODE" == true ]]; then
+            log "Plex Media Server installed. Open it once to register the LaunchAgent, then it will start automatically."
+        else
+            log "WARNING: LaunchAgent plist not found at $LAUNCHD_PLIST; Plex may not start automatically."
+        fi
     else
         rpm -Uvh --nosignature "$pkg_file"
     fi
