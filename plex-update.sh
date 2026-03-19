@@ -9,6 +9,7 @@ TMP_DIR="/tmp"
 PLEX_PACKAGE="plexmediaserver"
 DRY_RUN=false
 NON_ROOT=false
+INSTALL_MODE=false
 PLEX_TOKEN=""
 PLATFORM=""
 
@@ -207,6 +208,19 @@ install_package() {
     else
         rpm -Uvh --nosignature "$pkg_file"
     fi
+}
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -i, --install       Initial install; errors if Plex is already installed
+      --dry-run       Show what would happen without making changes
+      --platform VAL  Override platform detection (linux or macos)
+      --set-token TOK Save a Plex token for PlexPass downloads
+  -h, --help          Show this help message
+EOF
 }
 
 main() {
