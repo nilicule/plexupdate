@@ -269,11 +269,18 @@ main() {
     local installed_version
     installed_version=$(get_installed_version)
 
-    if [[ -z "$installed_version" ]]; then
+    if [[ -n "$installed_version" && "$INSTALL_MODE" == true ]]; then
+        log "ERROR: Plex Media Server is already installed ($installed_version). Run without --install to update."
+        exit 1
+    elif [[ -z "$installed_version" && "$INSTALL_MODE" == false ]]; then
         log "Plex Media Server is not installed."
         exit 1
+    elif [[ -z "$installed_version" && "$INSTALL_MODE" == true ]]; then
+        log "No version installed; will install latest."
+        installed_version="0"
+    else
+        log "Installed version: $installed_version"
     fi
-    log "Installed version: $installed_version"
 
     log "Fetching latest release info from Plex API..."
     local api_json
