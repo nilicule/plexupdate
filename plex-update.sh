@@ -322,7 +322,7 @@ main() {
     local pkg_file="$TMP_DIR/${pkg_filename}"
 
     log "Downloading $download_url ..."
-    curl -fL -o "$pkg_file" "$download_url"
+    curl -fL --progress-bar -o "$pkg_file" "$download_url"
 
     if [[ -n "$checksum" ]]; then
         log "Verifying checksum..."
