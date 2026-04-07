@@ -67,7 +67,11 @@ get_installed_version() {
 }
 
 fetch_api() {
-    curl -sfL "$API_URL"
+    if [[ -n "$PLEX_TOKEN" ]]; then
+        curl -sfL -H "X-Plex-Token: $PLEX_TOKEN" "$API_URL"
+    else
+        curl -sfL "$API_URL"
+    fi
 }
 
 # Parse the platform-specific release from the API JSON using python3.
@@ -248,9 +252,6 @@ main() {
     fi
 
     load_token
-    if [[ -n "$PLEX_TOKEN" ]]; then
-        API_URL="${API_URL}&X-Plex-Token=${PLEX_TOKEN}"
-    fi
 
     log "Checking installed Plex version..."
     local installed_version
