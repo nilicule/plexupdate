@@ -71,7 +71,7 @@ get_installed_version() {
 
 fetch_api() {
     if [[ -n "$PLEX_TOKEN" ]]; then
-        curl -sfL -H "X-Plex-Token: $PLEX_TOKEN" "$API_URL"
+        curl -sfL "${API_URL}?X-Plex-Token=${PLEX_TOKEN}"
     else
         curl -sfL "$API_URL"
     fi
