@@ -27,8 +27,8 @@ Automatic updater for Plex Media Server on Linux (CentOS/RPM) and macOS. Compare
 ## Usage
 
 ```bash
-# Save your Plex token (one-time setup, stored in .plex-token with 600 permissions)
-./plex-update.sh --set-token YOUR_PLEX_TOKEN
+# Authenticate with Plex (one-time setup — opens a browser URL, then polls until you sign in)
+./plex-update.sh --login
 
 # First-time install (errors if Plex is already installed)
 sudo ./plex-update.sh --install
@@ -46,7 +46,19 @@ sudo ./plex-update.sh --platform linux
 ./plex-update.sh --help
 ```
 
-Without a token the script falls back to the public Plex API, which covers most releases. The direct download endpoint (which can surface builds slightly ahead of the API) requires authentication and is skipped when no token is present.
+### Authentication
+
+Run `--login` once to authenticate with your Plex account. The script will:
+
+1. Print a URL — open it in any browser and sign in to Plex
+2. Poll automatically until authentication completes
+3. Save the token to `.plex-token` (mode 600) and a client identifier to `.plex-client-id`
+
+The token is reused on every subsequent run. If it ever expires the script will warn you and fall back to the public API until you run `--login` again.
+
+Without a token the script falls back to the public Plex API, which covers most releases. A token is required to access Plex Pass builds.
+
+> **Advanced:** If you already have a token from another source you can set it directly with `--set-token YOUR_TOKEN`.
 
 > **macOS fresh install note:** After `--install` completes, open Plex Media Server once manually to register the LaunchAgent. Subsequent runs will start/stop it automatically.
 

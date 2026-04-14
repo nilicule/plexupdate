@@ -1,5 +1,6 @@
 .idea/
 .venv/
 .plex-token
+.plex-client-id
 .worktrees/
 
