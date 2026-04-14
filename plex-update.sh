@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 TOKEN_FILE="$SCRIPT_DIR/.plex-token"
+CLIENT_ID_FILE="$SCRIPT_DIR/.plex-client-id"
+PLEX_PRODUCT="plex-update"
 
 API_URL="https://plex.tv/api/downloads/5.json?channel=plexpass"
 TMP_DIR="/tmp"
@@ -11,6 +13,7 @@ DRY_RUN=false
 NON_ROOT=false
 INSTALL_MODE=false
 PLEX_TOKEN=""
+CLIENT_ID=""
 PLATFORM=""
 
 # Platform-specific variables (set by set_platform_constants after detect_platform)
@@ -159,6 +162,79 @@ load_token() {
     fi
 }
 
+validate_token() {
+    if [[ -z "$PLEX_TOKEN" ]]; then
+        return
+    fi
+    local http_status
+    http_status=$(curl -o /dev/null -sw '%{http_code}' \
+        -H "X-Plex-Token: $PLEX_TOKEN" \
+        -H "Accept: application/json" \
+        "https://plex.tv/api/v2/user")
+    if [[ "$http_status" == "401" ]]; then
+        log "WARNING: Stored Plex token is invalid or expired. Run --login to re-authenticate."
+        PLEX_TOKEN=""
+    fi
+}
+
+load_or_create_client_id() {
+    if [[ -f "$CLIENT_ID_FILE" ]]; then
+        CLIENT_ID=$(tr -d '[:space:]' < "$CLIENT_ID_FILE")
+    else
+        CLIENT_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+        printf '%s' "$CLIENT_ID" > "$CLIENT_ID_FILE"
+        chmod 600 "$CLIENT_ID_FILE"
+    fi
+}
+
+plex_login() {
+    load_or_create_client_id
+
+    local pin_response
+    pin_response=$(curl -sfL -X POST "https://plex.tv/api/v2/pins" \
+        -H "Accept: application/json" \
+        -H "X-Plex-Product: $PLEX_PRODUCT" \
+        -H "X-Plex-Client-Identifier: $CLIENT_ID" \
+        --data-urlencode "strong=true")
+
+    local pin_id pin_code
+    pin_id=$(echo "$pin_response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['id'])")
+    pin_code=$(echo "$pin_response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['code'])")
+
+    local auth_url="https://app.plex.tv/auth#?clientID=${CLIENT_ID}&code=${pin_code}&context[device][product]=${PLEX_PRODUCT}"
+    log "Open this URL in a browser to authenticate with Plex:"
+    echo ""
+    echo "  $auth_url"
+    echo ""
+    log "Waiting for authentication (press Ctrl-C to cancel)..."
+
+    local token=""
+    local attempts=0
+    while [[ $attempts -lt 100 ]]; do
+        sleep 3
+        local poll_response
+        poll_response=$(curl -sfL "https://plex.tv/api/v2/pins/${pin_id}" \
+            -H "Accept: application/json" \
+            -H "X-Plex-Product: $PLEX_PRODUCT" \
+            -H "X-Plex-Client-Identifier: $CLIENT_ID")
+        token=$(echo "$poll_response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('authToken') or '')" 2>/dev/null || true)
+        if [[ -n "$token" ]]; then
+            break
+        fi
+        (( attempts++ ))
+    done
+
+    if [[ -z "$token" ]]; then
+        log "ERROR: Authentication timed out. Run --login again."
+        exit 1
+    fi
+
+    printf '%s' "$token" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+    log "Authentication successful. Token saved to $TOKEN_FILE"
+    exit 0
+}
+
 set_token() {
     local token
     token=$(echo "$1" | tr -d '[:space:]')
@@ -210,7 +286,8 @@ Options:
   -i, --install       Initial install; errors if Plex is already installed
       --dry-run       Show what would happen without making changes
       --platform VAL  Override platform detection (linux or macos)
-      --set-token TOK Save a Plex token for PlexPass downloads
+      --login         Authenticate with Plex via browser (PIN flow) and save token
+      --set-token TOK Save a Plex token manually (advanced)
   -h, --help          Show this help message
 EOF
 }
@@ -218,6 +295,9 @@ EOF
 main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --login)
+                plex_login
+                ;;
             --set-token)
                 if [[ $# -lt 2 ]]; then
                     log "ERROR: --set-token requires a non-empty token value."
@@ -252,6 +332,7 @@ main() {
     fi
 
     load_token
+    validate_token
 
     log "Checking installed Plex version..."
     local installed_version
