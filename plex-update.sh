@@ -7,9 +7,11 @@ CLIENT_ID_FILE="$SCRIPT_DIR/.plex-client-id"
 PLEX_PRODUCT="plex-update"
 
 API_URL="https://plex.tv/api/downloads/5.json?channel=plexpass"
+PUBLIC_API_URL="https://plex.tv/api/downloads/5.json"
 TMP_DIR="/tmp"
 PLEX_PACKAGE="plexmediaserver"
 DRY_RUN=false
+LIST_VERSIONS=false
 NON_ROOT=false
 INSTALL_MODE=false
 PLEX_TOKEN=""
@@ -71,9 +73,53 @@ get_installed_version() {
 
 fetch_api() {
     if [[ -n "$PLEX_TOKEN" ]]; then
-        curl -sfL "${API_URL}?X-Plex-Token=${PLEX_TOKEN}"
+        curl -sfL "${API_URL}&X-Plex-Token=${PLEX_TOKEN}"
     else
         curl -sfL "$API_URL"
+    fi
+}
+
+list_versions() {
+    load_token
+    validate_token
+
+    echo "Available Plex versions for ${PLATFORM} (${BUILD}/${DISTRO}):"
+    echo ""
+
+    local public_json public_parsed public_version public_url
+    if public_json=$(curl -sfL "$PUBLIC_API_URL" 2>/dev/null); then
+        if command -v jq &>/dev/null; then
+            public_parsed=$(parse_latest_jq "$public_json") || true
+        else
+            public_parsed=$(parse_latest "$public_json") || true
+        fi
+        public_version=$(echo "$public_parsed" | sed -n '1p')
+        public_url=$(echo "$public_parsed" | sed -n '2p')
+        printf '  %-12s %s\n' "Public:" "$public_version"
+        printf '  %-12s %s\n' "" "$public_url"
+    else
+        printf '  %-12s %s\n' "Public:" "(failed to fetch)"
+    fi
+
+    echo ""
+
+    if [[ -n "$PLEX_TOKEN" ]]; then
+        local plexpass_json plexpass_parsed plexpass_version plexpass_url
+        if plexpass_json=$(curl -sfL "${API_URL}&X-Plex-Token=${PLEX_TOKEN}" 2>/dev/null); then
+            if command -v jq &>/dev/null; then
+                plexpass_parsed=$(parse_latest_jq "$plexpass_json") || true
+            else
+                plexpass_parsed=$(parse_latest "$plexpass_json") || true
+            fi
+            plexpass_version=$(echo "$plexpass_parsed" | sed -n '1p')
+            plexpass_url=$(echo "$plexpass_parsed" | sed -n '2p')
+            printf '  %-12s %s\n' "PlexPass:" "$plexpass_version"
+            printf '  %-12s %s\n' "" "$plexpass_url"
+        else
+            printf '  %-12s %s\n' "PlexPass:" "(failed to fetch)"
+        fi
+    else
+        printf '  %-12s %s\n' "PlexPass:" "(no token — run --login to authenticate)"
     fi
 }
 
@@ -221,7 +267,7 @@ plex_login() {
         if [[ -n "$token" ]]; then
             break
         fi
-        (( attempts++ ))
+        attempts=$(( attempts + 1 ))
     done
 
     if [[ -z "$token" ]]; then
@@ -283,12 +329,13 @@ usage() {
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
-  -i, --install       Initial install; errors if Plex is already installed
-      --dry-run       Show what would happen without making changes
-      --platform VAL  Override platform detection (linux or macos)
-      --login         Authenticate with Plex via browser (PIN flow) and save token
-      --set-token TOK Save a Plex token manually (advanced)
-  -h, --help          Show this help message
+  -i, --install        Initial install; errors if Plex is already installed
+      --dry-run        Show what would happen without making changes
+      --list-versions  Show available versions from both public and PlexPass channels
+      --platform VAL   Override platform detection (linux or macos)
+      --login          Authenticate with Plex via browser (PIN flow) and save token
+      --set-token TOK  Save a Plex token manually (advanced)
+  -h, --help           Show this help message
 EOF
 }
 
@@ -306,6 +353,7 @@ main() {
                 set_token "$2"
                 ;;
             --dry-run) DRY_RUN=true ;;
+            --list-versions) LIST_VERSIONS=true ;;
             -i|--install) INSTALL_MODE=true ;;
             -h|--help) usage; exit 0 ;;
             --platform)
@@ -323,6 +371,11 @@ main() {
 
     detect_platform
     set_platform_constants
+
+    if $LIST_VERSIONS; then
+        list_versions
+        exit 0
+    fi
 
     if [[ "$PLATFORM" == "linux" && $EUID -ne 0 ]]; then
         NON_ROOT=true

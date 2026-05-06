@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(python3:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(bash -n /Users/remco/PersonalProjects/plexUpdate/plex-update.sh)",
+      "Bash(shellcheck /Users/remco/PersonalProjects/plexUpdate/plex-update.sh)"
     ]
   }
 }
