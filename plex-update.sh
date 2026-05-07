@@ -18,7 +18,6 @@ PLEX_TOKEN=""
 CLIENT_ID=""
 PLATFORM=""
 
-# Platform-specific variables (set by set_platform_constants after detect_platform)
 PLATFORM_KEY=""
 BUILD=""
 DISTRO=""
@@ -30,12 +29,14 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 detect_platform() {
     if [[ -n "$PLATFORM" ]]; then
-        return  # already set via --platform flag
+        return
     fi
-    case "$(uname -s)" in
+    local os
+    os=$(uname -s)
+    case "$os" in
         Darwin) PLATFORM="macos" ;;
         Linux)  PLATFORM="linux" ;;
-        *) log "ERROR: Unsupported OS: $(uname -s)"; exit 1 ;;
+        *) log "ERROR: Unsupported OS: $os"; exit 1 ;;
     esac
 }
 
@@ -79,54 +80,8 @@ fetch_api() {
     fi
 }
 
-list_versions() {
-    load_token
-    validate_token
-
-    echo "Available Plex versions for ${PLATFORM} (${BUILD}/${DISTRO}):"
-    echo ""
-
-    local public_json public_parsed public_version public_url
-    if public_json=$(curl -sfL "$PUBLIC_API_URL" 2>/dev/null); then
-        if command -v jq &>/dev/null; then
-            public_parsed=$(parse_latest_jq "$public_json") || true
-        else
-            public_parsed=$(parse_latest "$public_json") || true
-        fi
-        public_version=$(echo "$public_parsed" | sed -n '1p')
-        public_url=$(echo "$public_parsed" | sed -n '2p')
-        printf '  %-12s %s\n' "Public:" "$public_version"
-        printf '  %-12s %s\n' "" "$public_url"
-    else
-        printf '  %-12s %s\n' "Public:" "(failed to fetch)"
-    fi
-
-    echo ""
-
-    if [[ -n "$PLEX_TOKEN" ]]; then
-        local plexpass_json plexpass_parsed plexpass_version plexpass_url
-        if plexpass_json=$(curl -sfL "${API_URL}&X-Plex-Token=${PLEX_TOKEN}" 2>/dev/null); then
-            if command -v jq &>/dev/null; then
-                plexpass_parsed=$(parse_latest_jq "$plexpass_json") || true
-            else
-                plexpass_parsed=$(parse_latest "$plexpass_json") || true
-            fi
-            plexpass_version=$(echo "$plexpass_parsed" | sed -n '1p')
-            plexpass_url=$(echo "$plexpass_parsed" | sed -n '2p')
-            printf '  %-12s %s\n' "PlexPass:" "$plexpass_version"
-            printf '  %-12s %s\n' "" "$plexpass_url"
-        else
-            printf '  %-12s %s\n' "PlexPass:" "(failed to fetch)"
-        fi
-    else
-        printf '  %-12s %s\n' "PlexPass:" "(no token — run --login to authenticate)"
-    fi
-}
-
-# Parse the platform-specific release from the API JSON using python3.
 parse_latest() {
     local api_json="$1"
-
     echo "$api_json" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -142,26 +97,20 @@ for r in platform['releases']:
 
 parse_latest_jq() {
     local api_json="$1"
-
-    local platform_data
-    platform_data=$(echo "$api_json" | jq -r --arg key "$PLATFORM_KEY" '.computer[$key]')
-
-    local version
-    version=$(echo "$platform_data" | jq -r '.version')
-
-    local release
-    release=$(echo "$platform_data" \
-        | jq -r --arg build "$BUILD" --arg distro "$DISTRO" \
-            '.releases[] | select(.build == $build and .distro == $distro)')
-
-    local url checksum
-    url=$(echo "$release" | jq -r '.url')
-    checksum=$(echo "$release" | jq -r '.checksum')
-
-    printf '%s\n%s\n%s\n' "$version" "$url" "$checksum"
+    jq -r --arg key "$PLATFORM_KEY" --arg build "$BUILD" --arg distro "$DISTRO" \
+        '.computer[$key] | .version, (.releases[] | select(.build==$build and .distro==$distro) | .url, .checksum)' \
+        <<< "$api_json"
 }
 
-# Compare two version strings like 1.43.0.10492-121068a07.
+parse_release() {
+    local api_json="$1"
+    if command -v jq &>/dev/null; then
+        parse_latest_jq "$api_json" || true
+    else
+        parse_latest "$api_json" || true
+    fi
+}
+
 # Returns 0 if $1 is newer than $2, 1 otherwise.
 version_newer() {
     local latest="$1" installed="$2"
@@ -170,10 +119,8 @@ version_newer() {
         return 1
     fi
 
-    # Compare the numeric prefix (e.g. 1.43.0.10492) field by field
-    local latest_num installed_num
-    latest_num=$(echo "$latest" | cut -d'-' -f1)
-    installed_num=$(echo "$installed" | cut -d'-' -f1)
+    local latest_num="${latest%%-*}"
+    local installed_num="${installed%%-*}"
 
     local IFS='.'
     read -ra lparts <<< "$latest_num"
@@ -200,11 +147,14 @@ verify_checksum() {
     [[ "$actual" == "$expected" ]]
 }
 
+write_secret_file() {
+    printf '%s' "$2" > "$1"
+    chmod 600 "$1"
+}
+
 load_token() {
     if [[ -f "$TOKEN_FILE" ]]; then
-        local raw
-        raw=$(cat "$TOKEN_FILE")
-        PLEX_TOKEN=$(echo "$raw" | tr -d '[:space:]')
+        PLEX_TOKEN=$(tr -d '[:space:]' < "$TOKEN_FILE")
     fi
 }
 
@@ -228,8 +178,35 @@ load_or_create_client_id() {
         CLIENT_ID=$(tr -d '[:space:]' < "$CLIENT_ID_FILE")
     else
         CLIENT_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-        printf '%s' "$CLIENT_ID" > "$CLIENT_ID_FILE"
-        chmod 600 "$CLIENT_ID_FILE"
+        write_secret_file "$CLIENT_ID_FILE" "$CLIENT_ID"
+    fi
+}
+
+fetch_and_display_version() {
+    local label="$1" url="$2" fallback_msg="$3"
+    local json parsed version pkg_url
+    if json=$(curl -sfL "$url" 2>/dev/null); then
+        parsed=$(parse_release "$json")
+        { read -r version; read -r pkg_url; } <<< "$parsed"
+        printf '  %-12s %s\n' "${label}:" "$version"
+        printf '  %-12s %s\n' "" "$pkg_url"
+    else
+        printf '  %-12s %s\n' "${label}:" "$fallback_msg"
+    fi
+}
+
+list_versions() {
+    load_token
+    validate_token
+
+    echo "Available Plex versions for ${PLATFORM} (${BUILD}/${DISTRO}):"
+    echo ""
+    fetch_and_display_version "Public" "$PUBLIC_API_URL" "(failed to fetch)"
+    echo ""
+    if [[ -n "$PLEX_TOKEN" ]]; then
+        fetch_and_display_version "PlexPass" "${API_URL}&X-Plex-Token=${PLEX_TOKEN}" "(failed to fetch)"
+    else
+        printf '  %-12s %s\n' "PlexPass:" "(no token — run --login to authenticate)"
     fi
 }
 
@@ -244,8 +221,8 @@ plex_login() {
         --data-urlencode "strong=true")
 
     local pin_id pin_code
-    pin_id=$(echo "$pin_response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['id'])")
-    pin_code=$(echo "$pin_response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['code'])")
+    { read -r pin_id; read -r pin_code; } < <(echo "$pin_response" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d['id']); print(d['code'])")
 
     local auth_url="https://app.plex.tv/auth#?clientID=${CLIENT_ID}&code=${pin_code}&context[device][product]=${PLEX_PRODUCT}"
     log "Open this URL in a browser to authenticate with Plex:"
@@ -275,21 +252,18 @@ plex_login() {
         exit 1
     fi
 
-    printf '%s' "$token" > "$TOKEN_FILE"
-    chmod 600 "$TOKEN_FILE"
+    write_secret_file "$TOKEN_FILE" "$token"
     log "Authentication successful. Token saved to $TOKEN_FILE"
     exit 0
 }
 
 set_token() {
-    local token
-    token=$(echo "$1" | tr -d '[:space:]')
+    local token="${1//[[:space:]]/}"
     if [[ -z "$token" ]]; then
         log "ERROR: --set-token requires a non-empty token value."
         exit 1
     fi
-    printf '%s' "$token" > "$TOKEN_FILE"
-    chmod 600 "$TOKEN_FILE"
+    write_secret_file "$TOKEN_FILE" "$token"
     log "Token saved to $TOKEN_FILE"
     exit 0
 }
@@ -314,7 +288,7 @@ install_package() {
         if [[ -f "$LAUNCHD_PLIST" ]]; then
             log "Starting Plex Media Server..."
             launchctl load "$LAUNCHD_PLIST"
-        elif [[ "$INSTALL_MODE" == true ]]; then
+        elif $INSTALL_MODE; then
             log "Plex Media Server installed. Open it once to register the LaunchAgent, then it will start automatically."
         else
             log "WARNING: LaunchAgent plist not found at $LAUNCHD_PLIST; Plex may not start automatically."
@@ -391,13 +365,15 @@ main() {
     local installed_version
     installed_version=$(get_installed_version)
 
-    if [[ -n "$installed_version" && "$INSTALL_MODE" == true ]]; then
+    if [[ -n "$installed_version" ]] && $INSTALL_MODE; then
         log "ERROR: Plex Media Server is already installed ($installed_version). Run without --install to update."
         exit 1
-    elif [[ -z "$installed_version" && "$INSTALL_MODE" == false ]]; then
+    fi
+    if [[ -z "$installed_version" ]] && ! $INSTALL_MODE; then
         log "Plex Media Server is not installed."
         exit 1
-    elif [[ -z "$installed_version" && "$INSTALL_MODE" == true ]]; then
+    fi
+    if [[ -z "$installed_version" ]]; then
         log "No version installed; will install latest."
         installed_version="0"
     else
@@ -412,16 +388,10 @@ main() {
     fi
 
     local parsed
-    if command -v jq &>/dev/null; then
-        parsed=$(parse_latest_jq "$api_json") || true
-    else
-        parsed=$(parse_latest "$api_json") || true
-    fi
+    parsed=$(parse_release "$api_json")
 
     local latest_version download_url checksum
-    latest_version=$(echo "$parsed" | sed -n '1p')
-    download_url=$(echo "$parsed" | sed -n '2p')
-    checksum=$(echo "$parsed" | sed -n '3p')
+    { read -r latest_version; read -r download_url; read -r checksum; } <<< "$parsed"
 
     if [[ -z "$latest_version" || -z "$download_url" ]]; then
         log "ERROR: Failed to parse API response."
