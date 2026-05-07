@@ -4,4 +4,5 @@
 .plex-client-id
 .worktrees/
 .claude
-
+CLAUDE.md
+pyproject.toml
