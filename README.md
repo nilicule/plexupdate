@@ -2,6 +2,8 @@
 
 Automatic updater for Plex Media Server on Linux (CentOS/RPM) and macOS. Checks the Plex API and upgrades when a newer version is available.
 
+Supports both the public release channel and **Plex Pass** early-access builds. Authenticate once with your Plex account via `--login` (browser-based PIN flow) and the script will automatically fetch PlexPass releases going forward. Without a token it falls back to the public channel.
+
 ## Requirements
 
 - `curl`, plus `jq` or `python3` for JSON parsing
@@ -33,7 +35,7 @@ sudo ./plex-update.sh --platform linux
 ./plex-update.sh --help
 ```
 
-A Plex token (set via `--login`) is required for Plex Pass builds; without one the script falls back to the public API.
+Use `--list-versions` to compare the currently available public and PlexPass releases side by side.
 
 > **macOS:** After `--install`, open Plex Media Server once manually to register the LaunchAgent.
 
