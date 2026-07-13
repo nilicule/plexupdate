@@ -22,8 +22,7 @@ PLATFORM_KEY=""
 BUILD=""
 DISTRO=""
 PLEX_APP_PATH="/Applications/Plex Media Server.app"
-LAUNCHD_LABEL="com.plexapp.plexmediaserver"
-LAUNCHD_PLIST=""
+PLEX_MACOS_BINARY="Plex Media Server.app/Contents/MacOS/Plex Media Server"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -46,7 +45,6 @@ set_platform_constants() {
             PLATFORM_KEY="MacOS"
             BUILD="darwin-x86_64"
             DISTRO="macos"
-            LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
             ;;
         linux)
             PLATFORM_KEY="Linux"
@@ -268,12 +266,37 @@ set_token() {
     exit 0
 }
 
+stop_plex_macos() {
+    # Plex on macOS is a GUI app, not a launchd service. Ask it to quit
+    # gracefully via an Apple event, then force-kill anything left behind.
+    if ! pgrep -f "$PLEX_MACOS_BINARY" >/dev/null 2>&1; then
+        return
+    fi
+    log "Stopping Plex Media Server..."
+    osascript -e 'quit app "Plex Media Server"' >/dev/null 2>&1 || true
+
+    local i
+    for i in $(seq 1 15); do
+        pgrep -f "$PLEX_MACOS_BINARY" >/dev/null 2>&1 || return
+        sleep 1
+    done
+
+    pkill -f "$PLEX_MACOS_BINARY" 2>/dev/null || true
+    sleep 1
+}
+
+start_plex_macos() {
+    # Launching the app also (re)registers its login item, so it keeps
+    # starting automatically after a reboot.
+    log "Starting Plex Media Server..."
+    open -a "$PLEX_APP_PATH"
+}
+
 install_package() {
     local pkg_file="$1"
 
     if [[ "$PLATFORM" == "macos" ]]; then
-        log "Stopping Plex Media Server..."
-        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+        stop_plex_macos
 
         local tmp_unzip="$TMP_DIR/plex-update-unzip-$$"
         mkdir -p "$tmp_unzip"
@@ -285,14 +308,7 @@ install_package() {
         cp -R "$tmp_unzip/Plex Media Server.app" "$PLEX_APP_PATH"
         rm -rf "$tmp_unzip"
 
-        if [[ -f "$LAUNCHD_PLIST" ]]; then
-            log "Starting Plex Media Server..."
-            launchctl load "$LAUNCHD_PLIST"
-        elif $INSTALL_MODE; then
-            log "Plex Media Server installed. Open it once to register the LaunchAgent, then it will start automatically."
-        else
-            log "WARNING: LaunchAgent plist not found at $LAUNCHD_PLIST; Plex may not start automatically."
-        fi
+        start_plex_macos
     else
         rpm -Uvh --nosignature "$pkg_file"
     fi
