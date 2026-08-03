@@ -277,7 +277,12 @@ stop_plex_macos() {
 
     local i
     for i in $(seq 1 15); do
-        pgrep -f "$PLEX_MACOS_BINARY" >/dev/null 2>&1 || return
+        # Return 0 explicitly once Plex is gone. A bare `... || return` would
+        # return pgrep's exit status (1), and under `set -e` that non-zero
+        # return aborts the whole script before the new version is installed.
+        if ! pgrep -f "$PLEX_MACOS_BINARY" >/dev/null 2>&1; then
+            return 0
+        fi
         sleep 1
     done
 
